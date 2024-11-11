@@ -1,6 +1,7 @@
 import mustache from "mustache";
 
 import type { ChatMessage, ChatPrompt, CreateLangfusePromptResponse, TextPrompt } from "../types";
+import functionMap from "./functionMap";
 
 mustache.escape = function (text) {
   return text;
@@ -49,6 +50,24 @@ abstract class BasePromptClient {
   }
 }
 
+function evaluateFunctions(template: string, variables: Record<string, string>): string {
+  return template.replace(/{{(\w+)\(([^}]*)\)}}/g, (match, functionName: string, args: string) => {
+    const func = functionMap[functionName];
+    if (func) {
+      // Split and trim the arguments
+      const argValues = args.split(",").map((arg) => arg.trim().replace(/['"]/g, "")); // Remove quotes around args
+      const evaluatedArgs = argValues.map((arg) => variables[arg] ?? arg); // Replace var names with their values
+      try {
+        return func(...evaluatedArgs); // Call the function with the evaluated arguments
+      } catch (error) {
+        console.warn(`Error evaluating function ${functionName}:`, error);
+        return match; // Fallback to original if there's an error
+      }
+    }
+    return match; // If no matching function, leave it as is
+  });
+}
+
 export class TextPromptClient extends BasePromptClient {
   public readonly promptResponse: TextPrompt;
   public readonly prompt: string;
@@ -60,7 +79,8 @@ export class TextPromptClient extends BasePromptClient {
   }
 
   compile(variables?: Record<string, string>): string {
-    return mustache.render(this.promptResponse.prompt, variables ?? {});
+    const processedTemplate = evaluateFunctions(this.promptResponse.prompt, variables ?? {});
+    return mustache.render(processedTemplate, variables ?? {});
   }
 
   public getLangchainPrompt(): string {
